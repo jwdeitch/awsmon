@@ -48,24 +48,29 @@ func main() {
 
 func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *RegionReport) {
 
-	svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
+	requestChan := make(chan int, 2)
 
-	resp, err := svc.DescribeInstances(nil)
-	if err != nil {
-		panic(err)
-	}
+	go func() {
+		svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
 
-	for idx, _ := range resp.Reservations {
-		for _, inst := range resp.Reservations[idx].Instances {
-			RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
-				Id: *inst.InstanceId,
-				Region: region})
+		resp, err := svc.DescribeInstances(nil)
+		if err != nil {
+			panic(err)
 		}
-	}
 
-	s3Chan := make(chan int)
+		for idx, _ := range resp.Reservations {
+			for _, inst := range resp.Reservations[idx].Instances {
+				RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
+					Id: *inst.InstanceId,
+					Region: region})
+			}
+		}
+		requestChan <- 1
+	}()
 
-	go func(s3Chan chan <- int, region string) {
+
+
+	go func() {
 		svc := s3.New(session.New(), &aws.Config{Region: aws.String(region)})
 		bucketReport, err := svc.ListBuckets(&s3.ListBucketsInput{})
 		if err != nil {
@@ -93,9 +98,10 @@ func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *Regio
 				Name: *bucket.Name,
 				Region: region})
 		}
-		s3Chan <- 1
-	}(s3Chan, region)
+		requestChan <- 1
+	}()
 
-	<-s3Chan
+	<-requestChan
+	<-requestChan
 	wg.Done()
 }
