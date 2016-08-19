@@ -47,7 +47,9 @@ func main() {
 	wg.Wait()
 	<-bucketChan
 
-	fmt.Printf("%v", RegionReports)
+	jsonOutput, _ := json.Marshal(RegionReports)
+
+	fmt.Printf("%v", string(jsonOutput))
 
 }
 
@@ -85,8 +87,8 @@ func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
 	}
 	var bucketWaitList sync.WaitGroup
 	bucketWaitList.Add(len(bucketList.Buckets))
-	go func() {
-		for _, bucket := range bucketList.Buckets {
+	for _, bucket := range bucketList.Buckets {
+		go func() {
 			defer bucketWaitList.Done()
 			out, err := exec.Command(
 				"aws",
@@ -98,22 +100,20 @@ func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
 				"json",
 				"--query",
 				"[sum(Contents[].Size), length(Contents[])]").Output();
-			if err != nil {
-				fmt.Println(err.Error())
+			if err == nil {
+				var s3Stats []int64
+				err = json.Unmarshal(out, &s3Stats)
+				if err != nil {
+					panic(err.Error())
+				}
+				RegionReport.S3Buckets = append(RegionReport.S3Buckets, S3Bucket{
+					Name: *bucket.Name,
+					CreateDate: *bucket.CreationDate,
+					SizeInBytes: s3Stats[0],
+					NumberOfObjects: s3Stats[1]})
 			}
-			var s3Stats []int64
-			fmt.Printf("%v", string(out))
-			err = json.Unmarshal(out, &s3Stats)
-			if err != nil {
-				panic(err.Error())
-			}
-			RegionReport.S3Buckets = append(RegionReport.S3Buckets, S3Bucket{
-				Name: *bucket.Name,
-				CreateDate: *bucket.CreationDate,
-				SizeInBytes: s3Stats[0],
-				NumberOfObjects: s3Stats[1]})
-		}
-	}()
+		}()
+	}
 	bucketWaitList.Wait()
-	wg<- 1
+	wg <- 1
 }
