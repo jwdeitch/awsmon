@@ -19,8 +19,13 @@ type RegionReport struct {
 }
 
 type EC2instance struct {
-	Id     string
-	Region string
+	Id               string
+	Region           string
+	State            string
+	PublicIpAddress  string
+	LaunchTime       time.Time
+	PrivateIpAddress string
+	InstanceType     string
 }
 
 type S3Bucket struct {
@@ -69,7 +74,12 @@ func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *Regio
 			for _, inst := range resp.Reservations[idx].Instances {
 				RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
 					Id: *inst.InstanceId,
-					Region: region})
+					Region: region,
+					State: *inst.State.Name,
+					PrivateIpAddress: *inst.PrivateIpAddress,
+					InstanceType: *inst.InstanceType,
+					LaunchTime: *inst.LaunchTime,
+					PublicIpAddress: *inst.PublicIpAddress})
 			}
 		}
 		requestChan <- 1
@@ -88,7 +98,7 @@ func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
 	var bucketWaitList sync.WaitGroup
 	bucketWaitList.Add(len(bucketList.Buckets))
 	for _, bucket := range bucketList.Buckets {
-		go func() {
+		go func(bucket *s3.Bucket) {
 			defer bucketWaitList.Done()
 			out, err := exec.Command(
 				"aws",
@@ -112,7 +122,7 @@ func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
 					SizeInBytes: s3Stats[0],
 					NumberOfObjects: s3Stats[1]})
 			}
-		}()
+		}(bucket)
 	}
 	bucketWaitList.Wait()
 	wg <- 1
