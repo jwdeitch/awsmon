@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"os/exec"
 	"encoding/json"
+	"time"
 )
 
 type RegionReport struct {
@@ -26,7 +27,7 @@ type S3Bucket struct {
 	Name            string
 	SizeInBytes     int64
 	NumberOfObjects int64
-	Region          string
+	CreateDate      time.Time
 }
 
 func main() {
@@ -34,14 +35,17 @@ func main() {
 	RegionReports := RegionReport{}
 
 	var wg sync.WaitGroup
-
 	wg.Add(len(regions))
+
+	bucketChan := make(chan int)
+	go retrieveBucketReport(bucketChan, &RegionReports)
 
 	for _, region := range regions {
 		go retrieveRegionReport(region, &wg, &RegionReports)
 	}
 
 	wg.Wait()
+	<-bucketChan
 
 	fmt.Printf("%v", RegionReports)
 
@@ -69,47 +73,47 @@ func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *Regio
 		requestChan <- 1
 	}()
 
-	go func() {
-		svc := s3.New(session.New(), &aws.Config{Region: aws.String(region)})
-		bucketList, err := svc.ListBuckets(&s3.ListBucketsInput{})
-		if err != nil {
-			panic(err.Error())
-		}
-		var bucketStatsWg sync.WaitGroup
-		wg.Add(len(bucketList.Buckets))
-		go func() {
-			for _, bucket := range bucketList.Buckets {
-				out, err := exec.Command(
-					"aws",
-					"s3api",
-					"list-objects",
-					"--bucket",
-					*bucket.Name,
-					"--output",
-					"json",
-					"--query",
-					"[sum(Contents[].Size), length(Contents[])]").Output();
-				if err != nil {
-					fmt.Println(err.Error())
-				}
-				var s3Stats []int64
-				err = json.Unmarshal(out, &s3Stats)
-				if err != nil {
-					panic(err.Error())
-				}
-				RegionReport.S3Buckets = append(RegionReport.S3Buckets, S3Bucket{
-					Name: *bucket.Name,
-					Region: region,
-					SizeInBytes: s3Stats[0],
-					NumberOfObjects: s3Stats[1]})
-			}
-			bucketStatsWg.Done()
-		}()
-		wg.Wait()
-		requestChan <- 1
-	}()
-
-	<-requestChan
 	<-requestChan
 	wg.Done()
+}
+
+func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
+	svc := s3.New(session.New(), &aws.Config{Region: aws.String("us-east-1")})
+	bucketList, err := svc.ListBuckets(&s3.ListBucketsInput{})
+	if err != nil {
+		panic(err.Error())
+	}
+	var bucketWaitList sync.WaitGroup
+	bucketWaitList.Add(len(bucketList.Buckets))
+	go func() {
+		for _, bucket := range bucketList.Buckets {
+			defer bucketWaitList.Done()
+			out, err := exec.Command(
+				"aws",
+				"s3api",
+				"list-objects",
+				"--bucket",
+				*bucket.Name,
+				"--output",
+				"json",
+				"--query",
+				"[sum(Contents[].Size), length(Contents[])]").Output();
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+			var s3Stats []int64
+			fmt.Printf("%v", string(out))
+			err = json.Unmarshal(out, &s3Stats)
+			if err != nil {
+				panic(err.Error())
+			}
+			RegionReport.S3Buckets = append(RegionReport.S3Buckets, S3Bucket{
+				Name: *bucket.Name,
+				CreateDate: *bucket.CreationDate,
+				SizeInBytes: s3Stats[0],
+				NumberOfObjects: s3Stats[1]})
+		}
+	}()
+	bucketWaitList.Wait()
+	wg<- 1
 }
