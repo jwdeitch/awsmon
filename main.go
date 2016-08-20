@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"encoding/json"
 	"time"
+	"net/http"
 )
 
 type RegionReport struct {
@@ -36,6 +37,16 @@ type S3Bucket struct {
 }
 
 func main() {
+
+	fmt.Println("Running on http://localhost:9091/")
+	http.HandleFunc("/", collectReports) // set router
+	err := http.ListenAndServe(":9091", nil) // set listen port
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+}
+
+func collectReports(w http.ResponseWriter, r *http.Request) {
 	regions := []string{"us-west-2", "us-east-1"}
 	RegionReports := RegionReport{}
 
@@ -54,41 +65,36 @@ func main() {
 
 	jsonOutput, _ := json.Marshal(RegionReports)
 
-	fmt.Printf("%v", string(jsonOutput))
+	fmt.Fprintf(w, string(jsonOutput))
 
 }
 
+// Will retrieve region specific details
 func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *RegionReport) {
 
-	requestChan := make(chan int, 2)
+	svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
 
-	go func() {
-		svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
+	resp, err := svc.DescribeInstances(nil)
+	if err != nil {
+		panic(err)
+	}
 
-		resp, err := svc.DescribeInstances(nil)
-		if err != nil {
-			panic(err)
+	for idx, _ := range resp.Reservations {
+		for _, inst := range resp.Reservations[idx].Instances {
+			RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
+				Id: *inst.InstanceId,
+				Region: region,
+				State: *inst.State.Name,
+				PrivateIpAddress: *inst.PrivateIpAddress,
+				InstanceType: *inst.InstanceType,
+				LaunchTime: *inst.LaunchTime,
+				PublicIpAddress: *inst.PublicIpAddress})
 		}
-
-		for idx, _ := range resp.Reservations {
-			for _, inst := range resp.Reservations[idx].Instances {
-				RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
-					Id: *inst.InstanceId,
-					Region: region,
-					State: *inst.State.Name,
-					PrivateIpAddress: *inst.PrivateIpAddress,
-					InstanceType: *inst.InstanceType,
-					LaunchTime: *inst.LaunchTime,
-					PublicIpAddress: *inst.PublicIpAddress})
-			}
-		}
-		requestChan <- 1
-	}()
-
-	<-requestChan
+	}
 	wg.Done()
 }
 
+// S3 Buckets are not retrieved by region.
 func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
 	svc := s3.New(session.New(), &aws.Config{Region: aws.String("us-east-1")})
 	bucketList, err := svc.ListBuckets(&s3.ListBucketsInput{})
@@ -100,6 +106,9 @@ func retrieveBucketReport(wg chan <- int, RegionReport *RegionReport) {
 	for _, bucket := range bucketList.Buckets {
 		go func(bucket *s3.Bucket) {
 			defer bucketWaitList.Done()
+
+			// Unfortunately, it doesn't look like the SDK provides a query
+			// interface for S3 like the CLI does.
 			out, err := exec.Command(
 				"aws",
 				"s3api",
