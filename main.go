@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
-
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/aws/aws-sdk-go/aws"
 	"sync"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"os/exec"
 	"encoding/json"
 	"time"
 	"net/http"
+
+
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 type RegionReport struct {
@@ -46,7 +47,7 @@ func main() {
 	}
 }
 
-func collectReports(w http.ResponseWriter, r *http.Request) {
+func collectReports(w http.ResponseWriter) {
 	regions := []string{"us-west-2", "us-east-1"}
 	RegionReports := RegionReport{}
 
