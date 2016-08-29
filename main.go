@@ -8,16 +8,29 @@ import (
 	"time"
 	"net/http"
 
-
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/rds"
 )
 
 type RegionReport struct {
 	EC2Instances []EC2instance
 	S3Buckets    []S3Bucket
+	DBInstances  []DBInstance
+}
+
+type DBInstance struct {
+	Name               string
+	Region             string
+	InstanceType       string
+	State              string
+	AllocatedSize      int64
+	AutoMinorUpgrade   bool
+	MasterUsername     string
+	PubliclyAccessible bool
+	LaunchTime         time.Time
 }
 
 type EC2instance struct {
@@ -47,7 +60,7 @@ func main() {
 	}
 }
 
-func collectReports(w http.ResponseWriter) {
+func collectReports(w http.ResponseWriter, r *http.Request) {
 	regions := []string{"us-west-2", "us-east-1"}
 	RegionReports := RegionReport{}
 
@@ -73,24 +86,53 @@ func collectReports(w http.ResponseWriter) {
 // Will retrieve region specific details
 func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *RegionReport) {
 
-	svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
+	////////////////////////
+	////////// EC2 /////////
+	////////////////////////
 
-	resp, err := svc.DescribeInstances(nil)
+	ec2Svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
+
+	ec2Resp, err := ec2Svc.DescribeInstances(nil)
 	if err != nil {
 		panic(err)
 	}
 
-	for idx, _ := range resp.Reservations {
-		for _, inst := range resp.Reservations[idx].Instances {
+	for ec2Index, _ := range ec2Resp.Reservations {
+		for _, ec2Inst := range ec2Resp.Reservations[ec2Index].Instances {
 			RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
-				Id: *inst.InstanceId,
+				Id: *ec2Inst.InstanceId,
 				Region: region,
-				State: *inst.State.Name,
-				PrivateIpAddress: *inst.PrivateIpAddress,
-				InstanceType: *inst.InstanceType,
-				LaunchTime: *inst.LaunchTime,
-				PublicIpAddress: *inst.PublicIpAddress})
+				State: *ec2Inst.State.Name,
+				PrivateIpAddress: *ec2Inst.PrivateIpAddress,
+				InstanceType: *ec2Inst.InstanceType,
+				LaunchTime: *ec2Inst.LaunchTime,
+				PublicIpAddress: *ec2Inst.PublicIpAddress})
 		}
+	}
+
+
+	////////////////////////
+	////////// RDS /////////
+	////////////////////////
+
+	rdsSvc := rds.New(session.New(), &aws.Config{Region: aws.String(region)})
+
+	rdsResp, err := rdsSvc.DescribeDBInstances(nil)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, rdsIndex := range rdsResp.DBInstances {
+		RegionReport.DBInstances = append(RegionReport.DBInstances, DBInstance{
+			Name: *rdsIndex.DBInstanceIdentifier,
+			Region: region,
+			State: *rdsIndex.DBInstanceStatus,
+			InstanceType: *rdsIndex.DBInstanceClass,
+			AllocatedSize: *rdsIndex.AllocatedStorage,
+			LaunchTime: *rdsIndex.InstanceCreateTime,
+			MasterUsername: *rdsIndex.MasterUsername,
+			PubliclyAccessible: *rdsIndex.PubliclyAccessible,
+			AutoMinorUpgrade: *rdsIndex.AutoMinorVersionUpgrade})
 	}
 	wg.Done()
 }
