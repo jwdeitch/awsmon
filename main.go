@@ -86,54 +86,55 @@ func collectReports(w http.ResponseWriter, r *http.Request) {
 // Will retrieve region specific details
 func retrieveRegionReport(region string, wg *sync.WaitGroup, RegionReport *RegionReport) {
 
-	////////////////////////
-	////////// EC2 /////////
-	////////////////////////
+
+	var serviceWg sync.WaitGroup
+	serviceWg.Add(2) // EC2 and RDS
 
 	ec2Svc := ec2.New(session.New(), &aws.Config{Region: aws.String(region)})
-
-	ec2Resp, err := ec2Svc.DescribeInstances(nil)
-	if err != nil {
-		panic(err)
-	}
-
-	for ec2Index, _ := range ec2Resp.Reservations {
-		for _, ec2Inst := range ec2Resp.Reservations[ec2Index].Instances {
-			RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
-				Id: *ec2Inst.InstanceId,
-				Region: region,
-				State: *ec2Inst.State.Name,
-				PrivateIpAddress: *ec2Inst.PrivateIpAddress,
-				InstanceType: *ec2Inst.InstanceType,
-				LaunchTime: *ec2Inst.LaunchTime,
-				PublicIpAddress: *ec2Inst.PublicIpAddress})
-		}
-	}
-
-
-	////////////////////////
-	////////// RDS /////////
-	////////////////////////
-
 	rdsSvc := rds.New(session.New(), &aws.Config{Region: aws.String(region)})
 
-	rdsResp, err := rdsSvc.DescribeDBInstances(nil)
-	if err != nil {
-		panic(err)
-	}
+	go func(ec2Svc *ec2.EC2) {
+		ec2Resp, err := ec2Svc.DescribeInstances(nil)
+		if err != nil {
+			panic(err)
+		}
 
-	for _, rdsIndex := range rdsResp.DBInstances {
-		RegionReport.DBInstances = append(RegionReport.DBInstances, DBInstance{
-			Name: *rdsIndex.DBInstanceIdentifier,
-			Region: region,
-			State: *rdsIndex.DBInstanceStatus,
-			InstanceType: *rdsIndex.DBInstanceClass,
-			AllocatedSize: *rdsIndex.AllocatedStorage,
-			LaunchTime: *rdsIndex.InstanceCreateTime,
-			MasterUsername: *rdsIndex.MasterUsername,
-			PubliclyAccessible: *rdsIndex.PubliclyAccessible,
-			AutoMinorUpgrade: *rdsIndex.AutoMinorVersionUpgrade})
-	}
+		for ec2Index, _ := range ec2Resp.Reservations {
+			for _, ec2Inst := range ec2Resp.Reservations[ec2Index].Instances {
+				RegionReport.EC2Instances = append(RegionReport.EC2Instances, EC2instance{
+					Id: *ec2Inst.InstanceId,
+					Region: region,
+					State: *ec2Inst.State.Name,
+					PrivateIpAddress: *ec2Inst.PrivateIpAddress,
+					InstanceType: *ec2Inst.InstanceType,
+					LaunchTime: *ec2Inst.LaunchTime,
+					PublicIpAddress: *ec2Inst.PublicIpAddress})
+			}
+		}
+		serviceWg.Done()
+	}(ec2Svc)
+
+	go func(ec2Svc *rds.RDS) {
+		rdsResp, err := rdsSvc.DescribeDBInstances(nil)
+		if err != nil {
+			panic(err)
+		}
+		for _, rdsIndex := range rdsResp.DBInstances {
+			RegionReport.DBInstances = append(RegionReport.DBInstances, DBInstance{
+				Name: *rdsIndex.DBInstanceIdentifier,
+				Region: region,
+				State: *rdsIndex.DBInstanceStatus,
+				InstanceType: *rdsIndex.DBInstanceClass,
+				AllocatedSize: *rdsIndex.AllocatedStorage,
+				LaunchTime: *rdsIndex.InstanceCreateTime,
+				MasterUsername: *rdsIndex.MasterUsername,
+				PubliclyAccessible: *rdsIndex.PubliclyAccessible,
+				AutoMinorUpgrade: *rdsIndex.AutoMinorVersionUpgrade})
+		}
+		serviceWg.Done()
+	}(rdsSvc)
+
+	serviceWg.Wait()
 	wg.Done()
 }
 
